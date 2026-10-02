@@ -31,6 +31,13 @@ canvas#stage{display:block;max-width:100%;cursor:crosshair}
 .hud{position:absolute;left:10px;top:10px;display:flex;gap:8px;pointer-events:none}
 .chip{font-family:var(--f-mono);font-size:12px;background:rgba(13,27,46,.78);border:1px solid var(--line);padding:3px 8px;border-radius:999px;font-variant-numeric:tabular-nums;color:var(--paper)}
 .chip b{color:var(--brass);font-weight:500}
+.fsbar{position:absolute;right:10px;top:10px;display:flex;gap:6px}
+.ghost{background:rgba(13,27,46,.8);padding:7px 11px;font-size:13px}
+.fsonly{display:none}
+.stagebox.fs{position:fixed;inset:0;z-index:50;border:0;border-radius:0;display:flex;align-items:center;justify-content:center;max-width:none;background:#000}
+.stagebox.fs .fsonly{display:inline-flex}
+.stagebox.fs .hud{top:calc(10px + env(safe-area-inset-top,0px));left:calc(10px + env(safe-area-inset-left,0px))}
+.stagebox.fs .fsbar{top:calc(10px + env(safe-area-inset-top,0px));right:calc(10px + env(safe-area-inset-right,0px))}
 .banner{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(13,27,46,.92);border:1px solid var(--goal);border-radius:10px;padding:14px 20px;text-align:center;font-family:var(--f-display);font-weight:800;font-size:22px;color:var(--paper);pointer-events:none}
 .banner small{display:block;font-family:var(--f-body);font-weight:400;font-size:13px;color:var(--muted);margin-top:4px}
 .hint{font-size:13px;color:var(--muted);margin:0;min-height:1.5em}
@@ -63,6 +70,7 @@ button.primary{background:var(--brass);color:var(--ink);border-color:var(--brass
   <div class="stagebox" id="stagebox">
     <canvas id="stage" aria-label="Game stage: camera image with detected edges and a ball"></canvas>
     <div class="hud"><span class="chip">Shots <b id="shots">0</b></span><span class="chip">Time <b id="time">0.0</b>s</span><span class="chip" id="srcChip">Sample scene</span></div>
+    <div class="fsbar"><button id="fsFreeze" type="button" class="ghost fsonly" hidden>Freeze</button><button id="fsReset" type="button" class="ghost fsonly">Reset</button><button id="btnFs" type="button" class="ghost">Fullscreen</button></div>
     <div class="banner" id="banner" hidden>Goal!<small id="bannerSub"></small></div>
   </div>
   <p class="hint" id="hint"><strong>Play:</strong> press anywhere and drag back from the ball, like a slingshot. Release to shoot.</p>
@@ -119,10 +127,11 @@ let edge,gxA,gyA,ovData,magA;
 const S={facing:'environment',source:'sample',video:null,stream:null,frozen:false,mode:'play',view:'wall',showEdges:true,thr:60,bounce:.6};
 let start={x:70,y:112},finish={x:540,y:418};
 const ball={x:70,y:112,vx:0,vy:0,spin:0};
+let fs=false,lastAsp=0;
 let shots=0,running=false,elapsed=0,won=false,aim=null,frame=0,confetti=[];
 
-function setSize(aspect){
-  W=640;H=Math.round(W*Math.min(1.4,Math.max(.56,aspect)));H-=H%CS;
+function setSize(aspect,free){
+  W=640;H=Math.round(W*(free?Math.min(2.4,Math.max(.4,aspect)):Math.min(1.4,Math.max(.56,aspect))));H-=H%CS;
   GW=W/CS;GH=H/CS;
   src.width=W;src.height=H;small.width=GW;small.height=GH;ov.width=GW;ov.height=GH;
   edge=new Uint8Array(GW*GH);gxA=new Float32Array(GW*GH);gyA=new Float32Array(GW*GH);magA=new Float32Array(GW*GH);
@@ -131,7 +140,7 @@ function setSize(aspect){
 }
 function fitStage(){
   const box=$('stagebox').parentElement;
-  const maxW=box.clientWidth, maxH=Math.max(260,window.innerHeight*.66);
+  const maxW=fs?window.innerWidth:box.clientWidth, maxH=fs?window.innerHeight:Math.max(260,window.innerHeight*.66);
   const cw=Math.min(maxW,maxH*W/H), ch=cw*H/W;
   const dpr=Math.min(2,window.devicePixelRatio||1);
   stage.style.width=cw+'px';stage.style.height=ch+'px';
@@ -202,9 +211,9 @@ async function startCamera(){
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:S.facing,width:{ideal:960}},audio:false});
     const v=document.createElement('video');v.playsInline=true;v.muted=true;v.srcObject=stream;await v.play();
     S.video=v;S.stream=stream;S.source='camera';S.frozen=false;
-    setSize(v.videoHeight/v.videoWidth||.75);
+    if(fs)setSize(window.innerHeight/window.innerWidth,true);else setSize(v.videoHeight/v.videoWidth||.75);
     start={x:W*.12,y:H*.18};finish={x:W*.86,y:H*.84};
-    $('srcChip').textContent='Live camera';$('btnFreeze').hidden=false;$('btnFreeze').textContent='Freeze';
+    $('srcChip').textContent='Live camera';$('btnFreeze').hidden=false;$('fsFreeze').hidden=false;$('btnFreeze').textContent=$('fsFreeze').textContent='Freeze';
     drawCover(v,v.videoWidth,v.videoHeight,S.facing==='user');computeEdges();resetBall();
     $('btnFlip').hidden=false;setHint('<strong>Live:</strong> edges update every frame. Move objects or your hand to reshape the level. Freeze to lock it.');
   }catch(e){
@@ -212,7 +221,7 @@ async function startCamera(){
     setHint('<strong>Camera did not start.</strong> '+why);
   }
 }
-function stopCamera(){if(S.stream){S.stream.getTracks().forEach(t=>t.stop());}S.stream=null;S.video=null;$('btnFreeze').hidden=true;$('btnFlip').hidden=true;}
+function stopCamera(){if(S.stream){S.stream.getTracks().forEach(t=>t.stop());}S.stream=null;S.video=null;$('btnFreeze').hidden=true;$('fsFreeze').hidden=true;$('btnFlip').hidden=true;}
 $('file').addEventListener('change',e=>{
   const f=e.target.files[0];if(!f)return;
   const url=URL.createObjectURL(f),img=new Image();
@@ -224,7 +233,7 @@ $('file').addEventListener('change',e=>{
 $('btnCam').onclick=startCamera;
 $('btnFlip').onclick=()=>{S.facing=S.facing==='user'?'environment':'user';startCamera();};
 $('btnSample').onclick=()=>{stopCamera();paintSample();};
-$('btnFreeze').onclick=()=>{S.frozen=!S.frozen;$('btnFreeze').textContent=S.frozen?'Unfreeze':'Freeze';$('srcChip').textContent=S.frozen?'Frozen frame':'Live camera';};
+$('btnFreeze').onclick=()=>{S.frozen=!S.frozen;$('btnFreeze').textContent=$('fsFreeze').textContent=S.frozen?'Unfreeze':'Freeze';$('srcChip').textContent=S.frozen?'Frozen frame':'Live camera';};
 
 /* ---------- controls ---------- */
 const hints={
@@ -351,7 +360,29 @@ function loop(t){
   $('shots').textContent=shots;$('time').textContent=elapsed.toFixed(1);
   render(t);requestAnimationFrame(loop);
 }
-window.addEventListener('resize',fitStage);
+function relayout(){
+  if(S.video){
+    const asp=fs?window.innerHeight/window.innerWidth:(S.video.videoHeight/S.video.videoWidth||.75);
+    if(Math.abs(asp-lastAsp)<.02){fitStage();return;}
+    lastAsp=asp;
+    const rs={x:start.x/W,y:start.y/H},rf={x:finish.x/W,y:finish.y/H};
+    setSize(asp,fs);start={x:rs.x*W,y:rs.y*H};finish={x:rf.x*W,y:rf.y*H};
+    drawCover(S.video,S.video.videoWidth,S.video.videoHeight,S.facing==='user');computeEdges();resetBall();
+  }else fitStage();
+}
+async function toggleFs(){
+  const box=$('stagebox');fs=!fs;box.classList.toggle('fs',fs);
+  try{
+    if(fs){if(box.requestFullscreen)await box.requestFullscreen({navigationUI:'hide'});else if(box.webkitRequestFullscreen)box.webkitRequestFullscreen();}
+    else if(document.fullscreenElement)await document.exitFullscreen();else if(document.webkitFullscreenElement)document.webkitExitFullscreen();
+  }catch(e){}
+  $('btnFs').textContent=fs?'Exit':'Fullscreen';lastAsp=0;relayout();
+}
+$('btnFs').onclick=toggleFs;
+$('fsReset').onclick=()=>{resetBall();setMode('play');};
+$('fsFreeze').onclick=()=>$('btnFreeze').click();
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&fs){fs=false;$('stagebox').classList.remove('fs');$('btnFs').textContent='Fullscreen';lastAsp=0;relayout();}});
+let rT;window.addEventListener('resize',()=>{clearTimeout(rT);rT=setTimeout(relayout,150);});
 paintSample();
 requestAnimationFrame(loop);
 })();
