@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}[hidden]{display:none!important}</style>
+<title>Edgeball</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one column, the camera stage is the hero, controls stacked under it like a camera's mode dials. Single committed cyanotype (prussian blue) look. */
+:root{
+  --ink:#0d1b2e;        /* prussian ground */
+  --ink-2:#14273f;      /* raised panel */
+  --line:#284563;       /* hairlines */
+  --paper:#e9eef2;      /* text */
+  --muted:#93a8bd;      /* secondary text */
+  --cyan:#8fe0ff;       /* detected edges, focus */
+  --brass:#e7b54a;      /* ball, primary action */
+  --goal:#ff8a5c;       /* finish */
+  --f-display:"Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --f-body:"IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme:dark;
+}
+body{background:var(--ink);color:var(--paper);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:880px;margin:0 auto;padding-inline:16px;padding-block:18px 32px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
+h1{font-family:var(--f-display);font-weight:800;font-size:clamp(28px,6vw,40px);letter-spacing:-.02em;margin:0;line-height:1}
+h1 span{color:var(--brass)}
+.tag{color:var(--muted);margin:0;min-width:0;text-wrap:balance}
+.stagebox{position:relative;align-self:center;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000;max-width:100%;touch-action:none}
+canvas#stage{display:block;max-width:100%;cursor:crosshair}
+.hud{position:absolute;left:10px;top:10px;display:flex;gap:8px;pointer-events:none}
+.chip{font-family:var(--f-mono);font-size:12px;background:rgba(13,27,46,.78);border:1px solid var(--line);padding:3px 8px;border-radius:999px;font-variant-numeric:tabular-nums;color:var(--paper)}
+.chip b{color:var(--brass);font-weight:500}
+.banner{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(13,27,46,.92);border:1px solid var(--goal);border-radius:10px;padding:14px 20px;text-align:center;font-family:var(--f-display);font-weight:800;font-size:22px;color:var(--paper);pointer-events:none}
+.banner small{display:block;font-family:var(--f-body);font-weight:400;font-size:13px;color:var(--muted);margin-top:4px}
+.hint{font-size:13px;color:var(--muted);margin:0;min-height:1.5em}
+.hint strong{color:var(--paper);font-weight:600}
+.panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.group{display:flex;flex-direction:column;gap:8px;min-width:0}
+.label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:6px}
+button,.filebtn{font:500 14px/1 var(--f-body);color:var(--paper);background:var(--ink-2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+button:hover,.filebtn:hover{border-color:var(--muted)}
+button:focus-visible,.filebtn:focus-within,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--paper);color:var(--ink);border-color:var(--paper)}
+button.primary{background:var(--brass);color:var(--ink);border-color:var(--brass);font-weight:600}
+.filebtn input{position:absolute;opacity:0;width:1px;height:1px}
+.slider{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:13px}
+.slider output{font-family:var(--f-mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.slider input{grid-column:1/-1;accent-color:var(--brass);width:100%}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.note{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;margin:0;max-width:70ch}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+</head><body>
+<div class="wrap">
+  <header>
+    <h1>Edge<span>ball</span></h1>
+    <p class="tag">Your camera's edges become walls. Fling the ball from start to finish.</p>
+  </header>
+
+  <div class="stagebox" id="stagebox">
+    <canvas id="stage" aria-label="Game stage: camera image with detected edges and a ball"></canvas>
+    <div class="hud"><span class="chip">Shots <b id="shots">0</b></span><span class="chip">Time <b id="time">0.0</b>s</span><span class="chip" id="srcChip">Sample scene</span></div>
+    <div class="banner" id="banner" hidden>Goal!<small id="bannerSub"></small></div>
+  </div>
+  <p class="hint" id="hint"><strong>Play:</strong> press anywhere and drag back from the ball, like a slingshot. Release to shoot.</p>
+
+  <div class="panel">
+    <div class="group">
+      <span class="label">Scene</span>
+      <div class="row">
+        <button id="btnCam" type="button">Live camera</button>
+        <label class="filebtn">Photo<input id="file" type="file" accept="image/*" capture="environment"></label>
+        <button id="btnSample" type="button">Sample</button>
+        <button id="btnFreeze" type="button" hidden>Freeze</button>
+        <button id="btnFlip" type="button" hidden>Flip</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label">Tool</span>
+      <div class="row" role="group" aria-label="Tool">
+        <button type="button" data-mode="play" aria-pressed="true">Play</button>
+        <button type="button" data-mode="start" aria-pressed="false"><span class="dot" style="background:var(--brass)"></span>Set start</button>
+        <button type="button" data-mode="finish" aria-pressed="false"><span class="dot" style="background:var(--goal)"></span>Set finish</button>
+        <button type="button" class="primary" id="btnReset">Reset</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label">Physics view</span>
+      <div class="row" role="group" aria-label="View">
+        <button type="button" data-view="wall" aria-pressed="true">Wall · gravity</button>
+        <button type="button" data-view="floor" aria-pressed="false">Floor · perspective</button>
+        <button type="button" id="btnEdges" aria-pressed="true">Show edges</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label">Tuning</span>
+      <label class="slider" for="thr">Edge sensitivity<output id="thrOut">60</output><input id="thr" type="range" min="10" max="100" value="60"></label>
+      <label class="slider" for="bounce">Bounce<output id="bounceOut">0.60</output><input id="bounce" type="range" min="10" max="95" value="60"></label>
+    </div>
+  </div>
+
+  <p class="note"><strong>Wall</strong> treats the image as a side view: gravity pulls down, shelves and table tops hold the ball. <strong>Floor</strong> treats it as a table seen from above at an angle: the ball shrinks and slows as it moves toward the top (farther away). With the live camera, move your hand or objects in front of the lens and the walls move with them. Tap Freeze to lock a level.</p>
+</div>
+
+<script>
+(()=>{
+const stage=document.getElementById('stage'), ctx=stage.getContext('2d');
+const src=document.createElement('canvas'), sctx=src.getContext('2d',{willReadFrequently:true});
+const small=document.createElement('canvas'), smctx=small.getContext('2d',{willReadFrequently:true});
+const ov=document.createElement('canvas'), ovctx=ov.getContext('2d');
+const $=id=>document.getElementById(id);
+
+const CS=4;                 // collision cell size in game px
+let W=640,H=480,GW=160,GH=120,scale=1;
+let edge,gxA,gyA,ovData,magA;
+const S={facing:'environment',source:'sample',video:null,stream:null,frozen:false,mode:'play',view:'wall',showEdges:true,thr:60,bounce:.6};
+let start={x:70,y:112},finish={x:540,y:418};
+const ball={x:70,y:112,vx:0,vy:0,spin:0};
+let shots=0,running=false,elapsed=0,won=false,aim=null,frame=0,confetti=[];
+
+function setSize(aspect){
+  W=640;H=Math.round(W*Math.min(1.4,Math.max(.56,aspect)));H-=H%CS;
+  GW=W/CS;GH=H/CS;
+  src.width=W;src.height=H;small.width=GW;small.height=GH;ov.width=GW;ov.height=GH;
+  edge=new Uint8Array(GW*GH);gxA=new Float32Array(GW*GH);gyA=new Float32Array(GW*GH);magA=new Float32Array(GW*GH);
+  ovData=ovctx.createImageData(GW,GH);
+  fitStage();
+}
+function fitStage(){
+  const box=$('stagebox').parentElement;
+  const maxW=box.clientWidth, maxH=Math.max(260,window.innerHeight*.66);
+  const cw=Math.min(maxW,maxH*W/H), ch=cw*H/W;
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  stage.style.width=cw+'px';stage.style.height=ch+'px';
+  stage.width=Math.round(cw*dpr);stage.height=Math.round(ch*dpr);
+  scale=stage.width/W;
+}
+function drawCover(el,sw,sh,mirror){
+  const k=Math.max(W/sw,H/sh),dw=sw*k,dh=sh*k;
+  sctx.save();if(mirror){sctx.translate(W,0);sctx.scale(-1,1);}
+  sctx.drawImage(el,(W-dw)/2,(H-dh)/2,dw,dh);sctx.restore();
+}
+
+/* ---------- edge detection: grayscale -> blur -> Sobel -> threshold ---------- */
+function computeEdges(){
+  smctx.drawImage(src,0,0,GW,GH);
+  const d=smctx.getImageData(0,0,GW,GH).data,n=GW*GH;
+  const g=new Float32Array(n),b=new Float32Array(n);
+  for(let i=0;i<n;i++)g[i]=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];
+  for(let y=1;y<GH-1;y++)for(let x=1;x<GW-1;x++){const i=y*GW+x;
+    b[i]=(g[i-GW-1]+g[i-GW]+g[i-GW+1]+g[i-1]+g[i]+g[i+1]+g[i+GW-1]+g[i+GW]+g[i+GW+1])/9;}
+  const thr=220-S.thr*1.9;  // higher sensitivity -> lower threshold
+  edge.fill(0);
+  const sr=Math.ceil(26/CS),fr=Math.ceil(30/CS);
+  const scx=start.x/CS,scy=start.y/CS,fcx=finish.x/CS,fcy=finish.y/CS;
+  for(let y=2;y<GH-2;y++)for(let x=2;x<GW-2;x++){const i=y*GW+x;
+    const gx=-b[i-GW-1]-2*b[i-1]-b[i+GW-1]+b[i-GW+1]+2*b[i+1]+b[i+GW+1];
+    const gy=-b[i-GW-1]-2*b[i-GW]-b[i-GW+1]+b[i+GW-1]+2*b[i+GW]+b[i+GW+1];
+    gxA[i]=gx;gyA[i]=gy;
+    let m=Math.hypot(gx,gy);
+    if(S.video&&!S.frozen){m=magA[i]*.45+m*.55;}
+    magA[i]=m;
+    if(m>thr){
+      if((x-scx)**2+(y-scy)**2<sr*sr)continue;   // keep start zone clear
+      if((x-fcx)**2+(y-fcy)**2<fr*fr && S.view==='floor')continue;
+      edge[i]=1;
+    }}
+  const o=ovData.data;
+  for(let i=0;i<n;i++){const on=edge[i];o[i*4]=143;o[i*4+1]=224;o[i*4+2]=255;o[i*4+3]=on?210:0;}
+  ovctx.putImageData(ovData,0,0);
+}
+
+/* ---------- sample scene (a painted room) ---------- */
+function paintSample(){
+  setSize(.75);
+  const c=sctx;
+  let gr=c.createLinearGradient(0,0,0,H);gr.addColorStop(0,'#5d6f80');gr.addColorStop(1,'#43525f');
+  c.fillStyle=gr;c.fillRect(0,0,W,H);
+  c.fillStyle='#2b2723';c.fillRect(0,448,W,H-448);                  // floor
+  c.fillStyle='#a8743f';c.fillRect(28,138,230,13);                   // shelf
+  c.fillStyle='#d9cbb0';c.fillRect(200,96,22,42);c.fillRect(226,108,18,30); // books on shelf
+  c.save();c.translate(300,214);c.rotate(.42);c.fillStyle='#b7412e';c.fillRect(0,0,250,16);c.restore(); // leaning plank
+  c.fillStyle='#c9b48a';c.fillRect(110,330,130,118);c.fillStyle='#a8916a';c.fillRect(110,330,130,12); // box
+  c.fillStyle='#3f6b46';c.beginPath();c.arc(450,92,40,0,7);c.fill();c.fillStyle='#8a5a3a';c.fillRect(430,128,40,34); // plant
+  c.strokeStyle='#e8e2d4';c.lineWidth=6;c.strokeRect(330,40,70,52);  // frame
+  c.strokeStyle='#e8e2d4';c.lineWidth=12;c.beginPath();c.arc(548,392,52,.15,Math.PI-.15);c.stroke(); // bowl
+  c.fillStyle='#2b2723';c.fillRect(470,448,0,0);
+  start={x:70,y:110};finish={x:548,y:420};
+  S.source='sample';$('srcChip').textContent='Sample scene';
+  computeEdges();resetBall();
+}
+
+/* ---------- camera & photo ---------- */
+async function startCamera(){
+  stopCamera();
+  if(!window.isSecureContext||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    setHint('<strong>Live camera needs a secure page.</strong> This view blocks it. Open edgeball-standalone.html directly in Chrome or Brave on your computer, or serve it from localhost or https.');return;}
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:S.facing,width:{ideal:960}},audio:false});
+    const v=document.createElement('video');v.playsInline=true;v.muted=true;v.srcObject=stream;await v.play();
+    S.video=v;S.stream=stream;S.source='camera';S.frozen=false;
+    setSize(v.videoHeight/v.videoWidth||.75);
+    start={x:W*.12,y:H*.18};finish={x:W*.86,y:H*.84};
+    $('srcChip').textContent='Live camera';$('btnFreeze').hidden=false;$('btnFreeze').textContent='Freeze';
+    drawCover(v,v.videoWidth,v.videoHeight,S.facing==='user');computeEdges();resetBall();
+    $('btnFlip').hidden=false;setHint('<strong>Live:</strong> edges update every frame. Move objects or your hand to reshape the level. Freeze to lock it.');
+  }catch(e){
+    const why={NotAllowedError:'Permission was refused or this page is not allowed to use the camera. In Brave, click the camera icon or the lion in the address bar and allow the camera, then retry. Inside the Claude preview the camera is always blocked: use the standalone file.',NotFoundError:'No camera was found on this device.',NotReadableError:'The camera is busy in another app (Zoom, Meet, another tab). Close it and retry.',OverconstrainedError:'This camera does not support the requested mode. Tap Flip and retry.'}[e.name]||('Error: '+(e.name||'')+' '+(e.message||''));
+    setHint('<strong>Camera did not start.</strong> '+why);
+  }
+}
+function stopCamera(){if(S.stream){S.stream.getTracks().forEach(t=>t.stop());}S.stream=null;S.video=null;$('btnFreeze').hidden=true;$('btnFlip').hidden=true;}
+$('file').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const url=URL.createObjectURL(f),img=new Image();
+  img.onload=()=>{stopCamera();setSize(img.naturalHeight/img.naturalWidth);drawCover(img,img.naturalWidth,img.naturalHeight);
+    start={x:W*.12,y:H*.18};finish={x:W*.86,y:H*.84};S.source='photo';$('srcChip').textContent='Your photo';
+    computeEdges();resetBall();URL.revokeObjectURL(url);setMode('start');};
+  img.src=url;e.target.value='';
+});
+$('btnCam').onclick=startCamera;
+$('btnFlip').onclick=()=>{S.facing=S.facing==='user'?'environment':'user';startCamera();};
+$('btnSample').onclick=()=>{stopCamera();paintSample();};
+$('btnFreeze').onclick=()=>{S.frozen=!S.frozen;$('btnFreeze').textContent=S.frozen?'Unfreeze':'Freeze';$('srcChip').textContent=S.frozen?'Frozen frame':'Live camera';};
+
+/* ---------- controls ---------- */
+const hints={
+  play:'<strong>Play:</strong> press anywhere and drag back from the ball, like a slingshot. Release to shoot.',
+  start:'<strong>Set start:</strong> tap where the ball should begin. Walls near it are cleared.',
+  finish:'<strong>Set finish:</strong> tap where the goal should be.'};
+function setHint(h){$('hint').innerHTML=h;}
+function setMode(m){S.mode=m;document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode===m));setHint(hints[m]);}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{S.view=b.dataset.view;
+  document.querySelectorAll('[data-view]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.view===S.view));computeEdges();resetBall();});
+$('btnEdges').onclick=()=>{S.showEdges=!S.showEdges;$('btnEdges').setAttribute('aria-pressed',S.showEdges);};
+$('btnReset').onclick=()=>{resetBall();setMode('play');};
+$('thr').oninput=e=>{S.thr=+e.target.value;$('thrOut').textContent=S.thr;computeEdges();};
+$('bounce').oninput=e=>{S.bounce=e.target.value/100;$('bounceOut').textContent=S.bounce.toFixed(2);};
+
+function resetBall(){ball.x=start.x;ball.y=start.y;ball.vx=ball.vy=0;shots=0;elapsed=0;running=false;won=false;$('banner').hidden=true;confetti=[];}
+function toGame(e){const r=stage.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
+stage.addEventListener('pointerdown',e=>{
+  const p=toGame(e);
+  if(S.mode==='start'){start=p;computeEdges();resetBall();setMode('play');return;}
+  if(S.mode==='finish'){finish=p;computeEdges();resetBall();setMode('play');return;}
+  if(won)return;
+  stage.setPointerCapture(e.pointerId);aim={x0:p.x,y0:p.y,x:p.x,y:p.y};
+});
+stage.addEventListener('pointermove',e=>{if(aim){const p=toGame(e);aim.x=p.x;aim.y=p.y;}});
+function release(){
+  if(!aim)return;const dx=aim.x0-aim.x,dy=aim.y0-aim.y,L=Math.hypot(dx,dy);
+  if(L>6){const pw=Math.min(1100,L*5.5);ball.vx=dx/L*pw;ball.vy=dy/L*pw;shots++;running=true;}
+  aim=null;
+}
+stage.addEventListener('pointerup',release);stage.addEventListener('pointercancel',()=>aim=null);
+
+/* ---------- physics ---------- */
+const depthK=y=>S.view==='floor'?.35+.65*Math.max(0,Math.min(1,y/H)):1;
+const radiusAt=y=>S.view==='floor'?5+15*Math.max(0,Math.min(1,y/H)):11;
+
+function collide(r){
+  const x0=Math.max(1,Math.floor((ball.x-r)/CS)),x1=Math.min(GW-2,Math.floor((ball.x+r)/CS));
+  const y0=Math.max(1,Math.floor((ball.y-r)/CS)),y1=Math.min(GH-2,Math.floor((ball.y+r)/CS));
+  let sx=0,sy=0,hit=0,pen=0;
+  for(let gy=y0;gy<=y1;gy++)for(let gx=x0;gx<=x1;gx++){const i=gy*GW+gx;if(!edge[i])continue;
+    const dx=ball.x-(gx*CS+CS/2),dy=ball.y-(gy*CS+CS/2),d=Math.hypot(dx,dy);
+    if(d<r){const w=r-d;pen=Math.max(pen,w);hit++;
+      if(d>.01){sx+=dx/d*w;sy+=dy/d*w;}else{sx-=gxA[i];sy-=gyA[i];}}}
+  if(!hit)return;
+  let L=Math.hypot(sx,sy);if(L<1e-6){sx=-ball.vx;sy=-ball.vy;L=Math.hypot(sx,sy)||1;}
+  const nx=sx/L,ny=sy/L;
+  const push=Math.min(pen,3);ball.x+=nx*push;ball.y+=ny*push;
+  const vn=ball.vx*nx+ball.vy*ny;
+  if(vn<0){ball.vx-=(1+S.bounce)*vn*nx;ball.vy-=(1+S.bounce)*vn*ny;
+    const tx=-ny,ty=nx,vt=ball.vx*tx+ball.vy*ty;ball.vx-=vt*.03*tx;ball.vy-=vt*.03*ty;}
+}
+function step(dt){
+  const sp=Math.hypot(ball.vx,ball.vy);
+  const n=Math.min(40,Math.max(4,Math.ceil(sp*dt/(CS*.5))));const h=dt/n;
+  for(let s=0;s<n;s++){
+    const k=depthK(ball.y);
+    if(S.view==='wall'){ball.vy+=980*h;ball.vx*=Math.pow(.995,h*60);}
+    else{const f=Math.pow(.45,h);ball.vx*=f;ball.vy*=f;}
+    ball.x+=ball.vx*h*k;ball.y+=ball.vy*h*k;
+    const r=radiusAt(ball.y);
+    if(ball.x<r){ball.x=r;ball.vx=Math.abs(ball.vx)*S.bounce;}
+    if(ball.x>W-r){ball.x=W-r;ball.vx=-Math.abs(ball.vx)*S.bounce;}
+    if(ball.y<r){ball.y=r;ball.vy=Math.abs(ball.vy)*S.bounce;}
+    if(ball.y>H-r){ball.y=H-r;ball.vy=-Math.abs(ball.vy)*S.bounce;ball.vx*=.98;}
+    collide(r);
+  }
+  ball.spin+=Math.hypot(ball.vx,ball.vy)*depthK(ball.y)*dt/radiusAt(ball.y)*(ball.vx>=0?1:-1);
+  if(!won&&Math.hypot(ball.x-finish.x,ball.y-finish.y)<14+radiusAt(ball.y)*.5){
+    won=true;running=false;
+    $('bannerSub').textContent=`${shots} shot${shots===1?'':'s'} · ${elapsed.toFixed(1)} s`;$('banner').hidden=false;
+    for(let i=0;i<60;i++){const a=Math.random()*6.28,v=120+Math.random()*260;
+      confetti.push({x:finish.x,y:finish.y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-150,life:1.4,c:['#e7b54a','#ff8a5c','#8fe0ff','#e9eef2'][i%4]});}
+  }
+}
+
+/* ---------- render ---------- */
+function drawBall(){
+  const r=radiusAt(ball.y),x=ball.x,y=ball.y;
+  ctx.fillStyle='rgba(0,0,0,.38)';ctx.beginPath();
+  if(S.view==='floor')ctx.ellipse(x+r*.35,y+r*.7,r*1.05,r*.42,0,0,7);else ctx.ellipse(x+3,y+r*.92,r*.9,r*.28,0,0,7);
+  ctx.fill();
+  const g=ctx.createRadialGradient(x-r*.4,y-r*.45,r*.1,x,y,r);
+  g.addColorStop(0,'#fff4d2');g.addColorStop(.35,'#e7b54a');g.addColorStop(1,'#6b4a12');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();
+  ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.clip();
+  ctx.strokeStyle='rgba(60,35,5,.55)';ctx.lineWidth=Math.max(1.2,r*.16);
+  const c=Math.cos(ball.spin);ctx.beginPath();ctx.ellipse(x,y,Math.abs(c)*r+.5,r,0,0,7);ctx.stroke();
+  ctx.restore();
+}
+function render(t){
+  ctx.setTransform(scale,0,0,scale,0,0);
+  ctx.drawImage(src,0,0,W,H);
+  ctx.fillStyle='rgba(13,27,46,.12)';ctx.fillRect(0,0,W,H);
+  if(S.view==='floor'){ctx.strokeStyle='rgba(143,224,255,.12)';ctx.lineWidth=1;const vx=W/2,vy=-H*.6;
+    for(let i=-6;i<=6;i++){ctx.beginPath();ctx.moveTo(vx,vy);ctx.lineTo(W/2+i*W/5,H);ctx.stroke();}}
+  if(S.showEdges){ctx.imageSmoothingEnabled=false;ctx.drawImage(ov,0,0,W,H);ctx.imageSmoothingEnabled=true;}
+  // finish
+  const pr=(Math.sin(t/300)+1)/2,fs=S.view==='floor'?depthK(finish.y):1;
+  ctx.strokeStyle='#ff8a5c';ctx.lineWidth=2;
+  for(let k=0;k<2;k++){ctx.globalAlpha=k?.35+.4*pr:1;ctx.beginPath();ctx.arc(finish.x,finish.y,(14+k*8+k*pr*4)*fs+2,0,7);ctx.stroke();}
+  ctx.globalAlpha=1;ctx.fillStyle='rgba(255,138,92,.25)';ctx.beginPath();ctx.arc(finish.x,finish.y,14*fs+2,0,7);ctx.fill();
+  ctx.fillStyle='#e9eef2';ctx.font='600 11px "IBM Plex Mono",monospace';ctx.textAlign='center';ctx.fillText('FINISH',finish.x,finish.y-(30*fs+6));
+  // start
+  ctx.setLineDash([4,4]);ctx.strokeStyle='#e7b54a';ctx.beginPath();ctx.arc(start.x,start.y,18,0,7);ctx.stroke();ctx.setLineDash([]);
+  // aim
+  if(aim){const dx=aim.x0-aim.x,dy=aim.y0-aim.y,L=Math.hypot(dx,dy);
+    if(L>6){const pw=Math.min(1100,L*5.5)/1100;
+      ctx.strokeStyle='rgba(233,238,242,.85)';ctx.lineWidth=2;ctx.setLineDash([6,6]);
+      ctx.beginPath();ctx.moveTo(ball.x,ball.y);ctx.lineTo(ball.x+dx/L*(40+pw*120),ball.y+dy/L*(40+pw*120));ctx.stroke();ctx.setLineDash([]);
+      ctx.fillStyle='#e9eef2';ctx.fillText(Math.round(pw*100)+'%',ball.x,ball.y-radiusAt(ball.y)-10);}}
+  drawBall();
+  for(const p of confetti){ctx.globalAlpha=Math.max(0,p.life/1.4);ctx.fillStyle=p.c;ctx.fillRect(p.x,p.y,4,4);}ctx.globalAlpha=1;
+}
+
+let last=performance.now();
+function loop(t){
+  const dt=Math.min(.033,(t-last)/1000);last=t;frame++;
+  if(S.video&&!S.frozen&&S.video.readyState>=2){drawCover(S.video,S.video.videoWidth,S.video.videoHeight,S.facing==='user');if(frame%2===0)computeEdges();}
+  step(dt);
+  if(running){elapsed+=dt;}
+  for(const p of confetti){p.vy+=500*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;}confetti=confetti.filter(p=>p.life>0);
+  $('shots').textContent=shots;$('time').textContent=elapsed.toFixed(1);
+  render(t);requestAnimationFrame(loop);
+}
+window.addEventListener('resize',fitStage);
+paintSample();
+requestAnimationFrame(loop);
+})();
+</script>
+
+</body></html>
